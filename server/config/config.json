@@ -1,0 +1,6 @@
+{
+    "hosts":[
+        "primus-staging-redis-0001.grindrguy.net",
+        "primus-staging-redis-0002.grindrguy.net"
+    ]
+}
