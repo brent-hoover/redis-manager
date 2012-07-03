@@ -9,29 +9,21 @@ from tornado.ioloop import PeriodicCallback
 import socket
 from connection import Connection
 
-def parse_redis_config(redis_config):
-    rconfig = redis_config.split('\r\n')
-    rconfig_dict = dict()
-    for rc in rconfig:
-        if len(rc) != 0:
-            x, y = rc.split(':')
-            rconfig_dict[x] = y
-    return rconfig_dict
+
 
 def load_config():
     with open('config/config.json', 'rt') as config_file:
         config = json.loads(config_file.read())
         return config
 
-def ping_hosts(server_config):
-    for x, y in server_config.items():
-        print('pinging')
+def ping_hosts(conn):
+        print('pinging: %s' % conn.host)
 
 class Watcher(PeriodicCallback):
 
-    def __init__(self, ping_hosts, server_config, callback_time=1000, io_loop=None):
-        callback = ping_hosts(server_config)
-        super(Watcher, self).__init__(callback, callback_time=1000, io_loop=io_loop)
+    def __init__(self, callback, conn, callback_time=1000, io_loop=None):
+        print(callback)
+        super(Watcher, self).__init__(callback(conn), callback_time=callback_time, io_loop=io_loop)
 
 
 class ServerManager(object):
@@ -39,29 +31,65 @@ class ServerManager(object):
     slave and handles any changes necessary
     """
 
-    def connection_ready(self, conn):
-        print(io_loop._handlers)
-        self.slave_servers = list()
-        server_config = dict()
+    def __init__(self):
+        self.server_watchers = list()
+
+    def parse_redis_config(self, redis_config):
+        rconfig_dict = dict()
+        rconfig = redis_config.split('\r\n')
+        for rc in rconfig:
+            if len(rc) != 0:
+                x, y = rc.split(':')
+                rconfig_dict[x] = y
+        return rconfig_dict
+
+    def send_and_parse_command(self, conn, command):
+        conn.send_command(command)
+        response = conn.read_response()
+        return response
+
+    def check_server_alive(self, conn):
         conn.send_command("PING")
         response = conn.read_response()
         if response == "PONG":
-            print('Server: %s is alive' % conn.host)
+            return True
+        else:
+            return False
+
+    def get_config_info(self, conn):
         conn.send_command("INFO")
         response = conn.read_response()
-        server_config[conn.host] = parse_redis_config(response)
-        if server_config[conn.host]['role'] == "master":
-            server_config['master'] = server_config[conn.host]
+        return self.parse_redis_config(response)
 
-        if server_config[conn.host]['role'] == "slave":
+
+    def connection_ready(self, conn):
+        """
+        Verify server is up and check if it is a master or a slave
+        """
+        self.servers = list()
+        self.slave_servers = list()
+        self.master_servers = list()
+        self.server_config = dict()
+        if self.check_server_alive(conn):
+            self.servers.append(conn.host)
+        self.server_config[conn.host] = self.get_config_info(conn)
+        self.server_config[conn.host]['conn'] = conn
+        if self.server_config[conn.host]['role'] == "master":
+            print('Server %s is Master' % conn.host)
+            self.master_servers.append(self.server_config[conn.host])
+
+        if self.server_config[conn.host]['role'] == "slave":
             print('Server %s is Slave' % conn.host)
-            self.slave_servers.append(conn.host)
-            server_config['slaves'] = self.slave_servers
-        self.server_config = server_config
-        io_loop.remove_handler(conn._handlers)
-        callback = ping_hosts
-        server_watcher = Watcher(callback, server_config, callback_time=1000, io_loop=io_loop)
-        server_watcher.start()
+            self.slave_servers.append(self.server_config[conn.host])
+
+        periodic_callback = ping_hosts
+        server_watcher = Watcher(periodic_callback, conn, callback_time=1000, io_loop=io_loop)
+        self.server_watchers.append(server_watcher)
+
+    def start_watchers(self):
+        for x in self.server_watchers:
+            x.start
+
 
 
 
@@ -78,6 +106,5 @@ sm = ServerManager()
 for host in config['hosts']:
     callback = sm.connection_ready(conn[host])
     io_loop.add_handler(conn[host].connect(), callback, 3)
-    print(type(io_loop._handlers))
 io_loop.start()
 
