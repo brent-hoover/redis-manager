@@ -4,7 +4,8 @@
 import os
 import socket
 from itertools import chain, imap
-from errors import (
+from redis.connection import Connection
+from redis.exceptions import (
     RedisError,
     ConnectionError,
     ResponseError,
@@ -174,33 +175,13 @@ else:
     DefaultParser = PythonParser
 
 
-class Connection(object):
+class TornadoConnection(Connection):
     "Manages TCP communication to and from a Redis server"
-    def __init__(self, host='localhost', port=6379, db=0, password=None,
-                 socket_timeout=None, encoding='utf-8',
-                 encoding_errors='strict', decode_responses=False,
-                 parser_class=DefaultParser):
-        self.pid = os.getpid()
-        self.host = host
-        self.port = port
-        self.db = db
-        self.password = password
-        self.socket_timeout = socket_timeout
-        self.encoding = encoding
-        self.encoding_errors = encoding_errors
-        self.decode_responses = decode_responses
-        self._sock = None
-        self._parser = parser_class()
-
-    def __del__(self):
-        try:
-            self.disconnect()
-        except:
-            pass
 
 
     def connect(self):
-        "Connects to the Redis server if not already connected"
+        """Connects to the Redis server if not already connected
+        Slightly modified to return a socket.fileno() """
         if self._sock:
             return self._sock.fileno()
         try:
@@ -212,22 +193,9 @@ class Connection(object):
         self.on_connect()
         return self._sock.fileno()
 
-    def _connect(self):
-        "Create a TCP socket connection"
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(self.socket_timeout)
-        sock.connect((self.host, self.port))
-        return sock
+    def get_fileno(self):
+        return self._sock.fileno()
 
-    def _error_message(self, exception):
-        # args for socket.error can either be (errno, "message")
-        # or just "message"
-        if len(exception.args) == 1:
-            return "Error connecting to %s:%s. %s." %\
-                   (self.host, self.port, exception.args[0])
-        else:
-            return "Error %s connecting %s:%s. %s." %\
-                   (exception.args[0], self.host, self.port, exception.args[1])
 
     def on_connect(self):
         "Initialize the connection, authenticate and select a database"
@@ -275,10 +243,6 @@ class Connection(object):
             self.disconnect()
             raise
 
-    def send_command(self, *args):
-        "Pack and send a command to the Redis server"
-        self.send_packed_command(self.pack_command(*args))
-
     def read_response(self):
         "Read the response from a previously sent command"
         try:
@@ -290,96 +254,3 @@ class Connection(object):
             raise response
         return response
 
-    def encode(self, value):
-        "Return a bytestring representation of the value"
-        if isinstance(value, unicode):
-            return value.encode(self.encoding, self.encoding_errors)
-        return str(value)
-
-    def pack_command(self, *args):
-        "Pack a series of arguments into a value Redis command"
-        command = ['$%s\r\n%s\r\n' % (len(enc_value), enc_value)
-                   for enc_value in imap(self.encode, args)]
-        return '*%s\r\n%s' % (len(command), ''.join(command))
-
-class UnixDomainSocketConnection(Connection):
-    def __init__(self, path='', db=0, password=None,
-                 socket_timeout=None, encoding='utf-8',
-                 encoding_errors='strict', decode_responses=False,
-                 parser_class=DefaultParser):
-        self.pid = os.getpid()
-        self.path = path
-        self.db = db
-        self.password = password
-        self.socket_timeout = socket_timeout
-        self.encoding = encoding
-        self.encoding_errors = encoding_errors
-        self.decode_responses = decode_responses
-        self._sock = None
-        self._parser = parser_class()
-
-    def _connect(self):
-        "Create a Unix domain socket connection"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.socket_timeout)
-        sock.connect(self.path)
-        return sock
-
-    def _error_message(self, exception):
-        # args for socket.error can either be (errno, "message")
-        # or just "message"
-        if len(exception.args) == 1:
-            return "Error connecting to unix socket: %s. %s." %\
-                   (self.path, exception.args[0])
-        else:
-            return "Error %s connecting to unix socket: %s. %s." %\
-                   (exception.args[0], self.path, exception.args[1])
-
-
-# TODO: add ability to block waiting on a connection to be released
-class ConnectionPool(object):
-    "Generic connection pool"
-    def __init__(self, connection_class=Connection, max_connections=None,
-                 **connection_kwargs):
-        self.pid = os.getpid()
-        self.connection_class = connection_class
-        self.connection_kwargs = connection_kwargs
-        self.max_connections = max_connections or 2**31
-        self._created_connections = 0
-        self._available_connections = []
-        self._in_use_connections = set()
-
-    def _checkpid(self):
-        if self.pid != os.getpid():
-            self.disconnect()
-            self.__init__(self.connection_class, self.max_connections, **self.connection_kwargs)
-
-    def get_connection(self, command_name, *keys, **options):
-        "Get a connection from the pool"
-        self._checkpid()
-        try:
-            connection = self._available_connections.pop()
-        except IndexError:
-            connection = self.make_connection()
-        self._in_use_connections.add(connection)
-        return connection
-
-    def make_connection(self):
-        "Create a new connection"
-        if self._created_connections >= self.max_connections:
-            raise ConnectionError("Too many connections")
-        self._created_connections += 1
-        return self.connection_class(**self.connection_kwargs)
-
-    def release(self, connection):
-        "Releases the connection back to the pool"
-        self._checkpid()
-        if connection.pid == self.pid:
-            self._in_use_connections.remove(connection)
-            self._available_connections.append(connection)
-
-    def disconnect(self):
-        "Disconnects all connections in the pool"
-        all_conns = chain(self._available_connections, self._in_use_connections)
-        for connection in all_conns:
-            connection.disconnect()

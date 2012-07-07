@@ -1,6 +1,13 @@
 {
+    "stats":{
+        "db":0,
+        "port": 6379,
+        "host":"localhost"
+    },
     "hosts":[
-        "primus-staging-redis-0001.grindrguy.net",
-        "primus-staging-redis-0002.grindrguy.net"
-    ]
+        "ec2-107-20-32-81.compute-1.amazonaws.com",
+        "ec2-23-22-118-198.compute-1.amazonaws.com"
+    ],
+
+    "canonical_hostname": "primus-staging-redis-0001.grindrguy.net"
 }
