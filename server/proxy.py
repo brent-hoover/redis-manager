@@ -13,6 +13,7 @@ class RedisProxy(TCPServer):
 
     def __init__(self):
         sockets = bind_sockets(6379)
+        super(RedisProxy, self).__init__()
 
 
     def read_cb(self, data):
