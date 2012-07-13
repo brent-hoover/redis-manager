@@ -5,19 +5,27 @@
 import functools
 import json
 from datetime import datetime
+import os
 from tornado import ioloop
 from tornado.ioloop import PeriodicCallback
 from redis.client import StrictRedis
 from redis.exceptions import ConnectionError
 
+project_root = os.path.abspath(os.path.dirname(__file__))
+
 from connection import TornadoConnection
 
 def load_config():
-    with open('config/config.json', 'rt') as config_file:
+    """ load global config from json file
+    """
+    with open(os.path.join(project_root, 'config/config.json', 'rt')) as config_file:
         config = json.loads(config_file.read())
         return config
 
 def load_config_fromredis():
+    """
+    On reload after failure use the updated parameters now stored locally in Redis
+    """
 
     temp_conn = StrictRedis()
     master_server = temp_conn.get("master_server")
@@ -31,6 +39,9 @@ def load_config_fromredis():
 
 
 class Watcher(PeriodicCallback):
+    """
+    These watch each server, waiting to handle a failure
+    """
 
     def __init__(self, callback=None, callback_time=1000, io_loop=None):
         super(Watcher, self).__init__(callback=callback, callback_time=callback_time, io_loop=io_loop)
@@ -84,6 +95,9 @@ class ServerManager(object):
 
 
     def update_slave_servers(self, server, action):
+        """
+        Post-recovery, take a stock of which Slave servers we have and realign them
+        """
         if action == "remove":
             self.write_logs(message="Removing Slave server: %s" % server)
             self.stats_server.lrem("slave_servers", 0, server)
@@ -92,12 +106,15 @@ class ServerManager(object):
             self.stats_server.rpush('slave_servers', server)
 
     def get_new_master(self):
+        """ Grad the first slave and make it the master """
         return self.stats_server.lpop("slave_servers")
 
     def update_last_checked(self, server):
+        """ Update timestamps to pub/sub server for when we checked each server """
         self.stats_server.set('server_checked:%s' % server, datetime.now())
 
     def promote_master(self, master_server):
+        """ Given our new master server, make it the master """
 
         self.write_logs(message='Preparing to promote master server: %s' % master_server)
         master_conn = StrictRedis(host=master_server, port=6379, db=0)
@@ -116,6 +133,8 @@ class ServerManager(object):
 
 
     def reslave_servers(self):
+        """ Make sure all non-master servers are now slaves of the new master
+        """
         reslave = True
         for serv in self.slave_servers:
             temp_conn = StrictRedis(serv, port=6379, db=0)
@@ -128,25 +147,30 @@ class ServerManager(object):
         return reslave
 
     def open_connections(self):
+        """ Use our modified connection object, that looks like a socket to Tornado
+        """
         for host in self.config['hosts']:
             self.conn[host] = TornadoConnection(host=host)
             self.write_logs(message='Setting up connection to: %s' % host)
 
     def parse_redis_config(self, redis_config):
+        """ Read the verbose output from the INFO command """
         rconfig_dict = dict()
         rconfig = redis_config.split('\r\n')
         for rc in rconfig:
-            if len(rc) != 0:
+            if len(rc):
                 x, y = rc.split(':')
                 rconfig_dict[x] = y
         return rconfig_dict
 
     def send_and_parse_command(self, conn, command):
+        """ Basically a clone of the same method in the redis driver """
         conn.send_command(command)
         response = conn.read_response()
         return response
 
     def check_server_alive(self, conn):
+        """ Send server a PING """
         conn.send_command("PING")
         response = conn.read_response()
         if response == "PONG":
@@ -155,6 +179,7 @@ class ServerManager(object):
             return False
 
     def get_config_info(self, conn):
+        """ Send INFO command, get response """
         conn.send_command("INFO")
         response = conn.read_response()
         return self.parse_redis_config(response)
@@ -187,6 +212,7 @@ class ServerManager(object):
 
 
     def start_watchers(self):
+        """ After being attached, watchers still need to be started, but we wait until they are all in place """
         self.write_logs(message='starting periodic watchers')
         for x in self.server_watchers:
             x.start()
@@ -203,6 +229,9 @@ class ServerManager(object):
 
 
     def handler_server_failure(self, conn):
+        """ The main function called to do the important stuff. The hardest thing is to get Tornado to shut up about
+        the failure to handle it
+        """
         self.stop_watchers()
         if conn.host == self.master_server:
             self.write_logs(message='[ERROR]: Master Server down')
@@ -218,6 +247,8 @@ class ServerManager(object):
 
 
 def start_tornado(config, io_loop):
+    """ Launch our event loop
+    """
 
     #add callback for connection ready
     sm = ServerManager(config, io_loop)
