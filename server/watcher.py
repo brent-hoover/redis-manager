@@ -18,7 +18,7 @@ from connection import TornadoConnection
 def load_config():
     """ load global config from json file
     """
-    with open(os.path.join(project_root, 'config/config.json', 'rt')) as config_file:
+    with open(os.path.join(project_root, 'config/config.json'), 'rt') as config_file:
         config = json.loads(config_file.read())
         return config
 
