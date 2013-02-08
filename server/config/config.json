@@ -5,9 +5,9 @@
         "host":"localhost"
     },
     "hosts":[
-        "primus-redis-0001.grindrguy.net",
-        "primus-redis-0002.grindrguy.net"
+        "redis-0001.mydomain.net",
+        "redis-0002.mydomain.net"
     ],
 
-    "canonical_hostname": "primus-redis-0001.grindrguy.net"
+    "canonical_hostname": "redis-0001.mydomain.net"
 }

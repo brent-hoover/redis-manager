@@ -60,10 +60,6 @@ class PythonParser(object):
             if length is not None:
                 bytes_left = length + 2 # read the line ending
                 if length > self.MAX_READ_LENGTH:
-                    # apparently reading more than 1MB or so from a windows
-                    # socket can cause MemoryErrors. See:
-                    # https://github.com/andymccurdy/redis-py/issues/205
-                    # read smaller chunks at a time to work around this
                     try:
                         buf = StringIO()
                         while bytes_left > 0:
@@ -181,6 +177,7 @@ class TornadoConnection(Connection):
 
     def connect(self):
         """Connects to the Redis server if not already connected
+        Based upon the core redis driver.
         Slightly modified to return a socket.fileno() """
         if self._sock:
             return self._sock.fileno()
