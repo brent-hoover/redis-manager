@@ -1,4 +1,6 @@
 ### /Users/bhoover/.gitignore-boilerplates/Python.gitignore
+#
+.DS_Store
 
 *.py[cod]
 
@@ -34,3 +36,5 @@ nosetests.xml
 .idea
 
 
+
+.gitpilot
